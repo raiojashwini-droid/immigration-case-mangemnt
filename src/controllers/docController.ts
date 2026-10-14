@@ -159,7 +159,16 @@ export const getDocuments = async (req: AuthenticatedRequest, res: Response) => 
       orderBy: { uploadedAt: 'desc' }
     });
 
-    return res.json({ success: true, data: documents });
+    const hostBaseUrl = `${req.protocol}://${req.get('host')}`;
+    const mapped = documents.map(doc => {
+      let fileUrl = doc.fileUrl;
+      if (fileUrl && fileUrl.includes('localhost:5005')) {
+        fileUrl = fileUrl.replace('http://localhost:5005', hostBaseUrl);
+      }
+      return { ...doc, fileUrl };
+    });
+
+    return res.json({ success: true, data: mapped });
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message });
   }
