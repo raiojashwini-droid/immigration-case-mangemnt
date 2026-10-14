@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { uploadDocument, getDocuments, deleteDocument } from '../controllers/docController.js';
+import { uploadDocument, getDocuments, deleteDocument, updateDocument } from '../controllers/docController.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
 import { upload } from '../middleware/uploadMiddleware.js';
 
@@ -13,6 +13,11 @@ router.post('/', upload.any(), uploadDocument);
 
 // GET /api/documents - List all documents
 router.get('/', getDocuments);
+
+// PATCH & PUT /api/documents/:id - Update document (status, category, etc.)
+router.patch('/:id', updateDocument);
+router.put('/:id', updateDocument);
+router.patch('/:id/status', updateDocument);
 
 // DELETE /api/documents/:id - Delete document by ID
 router.delete('/:id', deleteDocument);
