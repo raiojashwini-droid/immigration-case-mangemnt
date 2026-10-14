@@ -117,11 +117,21 @@ export const createClient = async (req: Request, res: Response) => {
         }
       });
 
-      // 3. Auto-initialize case for new client (Stage 1)
-      const caseCount = await tx.case.count();
-      const counter = caseCount + 1;
-      const formattedNum = counter < 10 ? `00${counter}` : counter < 100 ? `0${counter}` : `${counter}`;
-      const caseNumber = `NIW-2026-${formattedNum}`;
+      // 3. Auto-initialize case for new client (strictly Stage 1)
+      let counter = (await tx.case.count()) + 1;
+      let isUnique = false;
+      let caseNumber = '';
+      while (!isUnique) {
+        const formattedNum = counter < 10 ? `00${counter}` : counter < 100 ? `0${counter}` : `${counter}`;
+        caseNumber = `NIW-2026-${formattedNum}`;
+        const existing = await tx.case.findUnique({ where: { caseNumber } });
+        if (!existing) {
+          isUnique = true;
+        } else {
+          counter++;
+        }
+      }
+
       await tx.case.create({
         data: {
           caseNumber,

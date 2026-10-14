@@ -4,7 +4,8 @@ const createMessageSchema = z.object({
     caseId: z.string(),
     senderName: z.string().min(2),
     senderRole: z.enum(['superadmin', 'admin', 'writer', 'reviewer', 'client']),
-    content: z.string().min(1)
+    content: z.string().min(1),
+    channel: z.string().optional()
 });
 export const getMessages = async (req, res) => {
     try {
@@ -37,11 +38,13 @@ export const createMessage = async (req, res) => {
         // Format current local date time string YYYY-MM-DD HH:MM matching types
         const now = new Date();
         const timestampStr = now.toISOString().replace('T', ' ').substring(0, 16);
+        const resolvedRole = req.user?.role || result.data.senderRole;
+        const resolvedName = result.data.senderName;
         const newMessage = await prisma.message.create({
             data: {
                 caseId: result.data.caseId,
-                senderName: result.data.senderName,
-                senderRole: result.data.senderRole,
+                senderName: resolvedName,
+                senderRole: resolvedRole,
                 content: result.data.content,
                 timestamp: timestampStr
             }

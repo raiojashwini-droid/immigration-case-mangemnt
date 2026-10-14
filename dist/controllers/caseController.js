@@ -208,6 +208,41 @@ export const createCase = async (req, res) => {
         if (!client) {
             return res.status(404).json({ success: false, error: 'Client not found' });
         }
+        // Deduplication check: if client already has an active auto-initialized case, update it instead of creating a duplicate!
+        const existingAutoCase = await prisma.case.findFirst({
+            where: {
+                clientId,
+                OR: [
+                    { notes: 'Auto-initialized case for client' },
+                    { petitionCategory: petitionCategory || 'EB-2 NIW' }
+                ]
+            },
+            orderBy: { lastUpdated: 'desc' }
+        });
+        if (existingAutoCase) {
+            const updatedCase = await prisma.case.update({
+                where: { id: existingAutoCase.id },
+                data: {
+                    petitionCategory: petitionCategory || existingAutoCase.petitionCategory,
+                    fieldCategory: fieldCategory || title || existingAutoCase.fieldCategory,
+                    assignedWriter: assignedWriter || existingAutoCase.assignedWriter,
+                    assignedReviewer: assignedReviewer || existingAutoCase.assignedReviewer,
+                    riskLevel: riskLevel || existingAutoCase.riskLevel,
+                    targetFilingDate: targetFilingDate || existingAutoCase.targetFilingDate,
+                    uscisServiceCenter: uscisServiceCenter || existingAutoCase.uscisServiceCenter,
+                    premiumProcessing: premiumProcessing !== undefined ? Boolean(premiumProcessing) : existingAutoCase.premiumProcessing,
+                    notes: notes || existingAutoCase.notes
+                },
+                include: {
+                    client: true,
+                    documents: true,
+                    recommenders: true,
+                    payments: true,
+                    messages: true
+                }
+            });
+            return res.status(200).json({ success: true, data: updatedCase });
+        }
         const caseNumber = await generateUniqueCaseNumber(prisma, petitionCategory);
         const newCase = await prisma.case.create({
             data: {

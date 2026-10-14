@@ -181,3 +181,29 @@ export const deleteDocument = async (req, res) => {
         return res.status(500).json({ success: false, error: error.message || 'Failed to delete document' });
     }
 };
+export const updateDocument = async (req, res) => {
+    if (!req.user) {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    const { id } = req.params;
+    const { status, category, aiSummary } = req.body;
+    try {
+        const document = await prisma.document.findUnique({ where: { id } });
+        if (!document) {
+            return res.status(404).json({ success: false, error: 'Document not found' });
+        }
+        const updated = await prisma.document.update({
+            where: { id },
+            data: {
+                ...(status ? { status } : {}),
+                ...(category ? { category } : {}),
+                ...(aiSummary ? { aiSummary } : {})
+            }
+        });
+        return res.json({ success: true, data: updated, message: 'Document updated successfully' });
+    }
+    catch (error) {
+        console.error('Document update error:', error);
+        return res.status(500).json({ success: false, error: error.message || 'Failed to update document' });
+    }
+};
