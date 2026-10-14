@@ -57,11 +57,13 @@ export const getCases = async (req, res) => {
         }
         else if (userRole === 'writer') {
             const dbUser = await prisma.user.findUnique({ where: { id: user?.id } });
-            const writerName = dbUser?.name || 'Drafter 1';
+            const writerName = dbUser?.name || 'Drafter';
             whereClause.OR = [
                 { assignedWriter: { contains: writerName } },
-                { assignedWriter: { contains: 'Drafter 1' } },
-                { assignedWriter: { contains: 'Petition Drafter 1' } }
+                { assignedWriter: { contains: 'Drafter' } },
+                { assignedWriter: { contains: 'Petition Drafter' } },
+                { assignedWriter: null },
+                { assignedWriter: '' }
             ];
         }
         // 2. Risk Level filter
@@ -136,13 +138,29 @@ export const getMyCase = async (req, res) => {
             return res.json({ success: true, data: fallbackCase });
         }
         // Find the most recent case for this client
-        const myCase = await prisma.case.findFirst({
+        let myCase = await prisma.case.findFirst({
             where: { clientId: client.id },
             include: { client: true, documents: true, recommenders: true, payments: true, messages: true },
             orderBy: { lastUpdated: 'desc' }
         });
         if (!myCase) {
-            return res.status(404).json({ success: false, error: 'No case found for this client' });
+            // Auto-create initial case for newly registered client
+            const caseNumber = await generateUniqueCaseNumber(prisma, 'EB-2 NIW');
+            myCase = await prisma.case.create({
+                data: {
+                    caseNumber,
+                    clientId: client.id,
+                    petitionCategory: 'EB-2 NIW',
+                    fieldCategory: client.currentField || 'Proposed Endeavor',
+                    riskLevel: 'medium',
+                    targetFilingDate: '2026-12-31',
+                    uscisServiceCenter: 'Nebraska (NSC)',
+                    premiumProcessing: false,
+                    currentStage: 1,
+                    notes: 'Auto-initialized case for client portal'
+                },
+                include: { client: true, documents: true, recommenders: true, payments: true, messages: true }
+            });
         }
         return res.json({ success: true, data: myCase });
     }

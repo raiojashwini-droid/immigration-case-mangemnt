@@ -2,6 +2,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import authRoutes from './routes/authRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
 import caseRoutes from './routes/caseRoutes.js';
@@ -19,17 +21,8 @@ import reportRoutes from './routes/reportRoutes.js';
 // Seed API endpoint for easy developer verification
 import { seed } from './config/seed.js';
 import { execSync } from 'child_process';
-// Auto-sync Prisma schema with database on startup
-try {
-    console.log('🔄 Auto-pushing Prisma schema to database...');
-    execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' });
-    console.log('✅ Database schema synchronized.');
-}
-catch (err) {
-    console.warn('⚠️ Database schema push check skipped:', err.message || err);
-}
-// Auto-seed database if empty on startup
-seed().catch(err => console.warn('Database seeding check skipped:', err.message || err));
+// Safe initialization on startup (preserves existing data)
+seed(false).catch(err => console.warn('Database initialization warning:', err.message || err));
 const app = express();
 const port = process.env.PORT || 5000;
 const allowedOrigins = [
@@ -40,7 +33,8 @@ const allowedOrigins = [
     'http://localhost:3000',
     'http://localhost:5174',
     'http://localhost:5000',
-    'http://localhost:5001'
+    'http://localhost:5001',
+    'http://localhost:5005'
 ];
 if (process.env.FRONTEND_URL) {
     const customOrigin = process.env.FRONTEND_URL.replace(/\/$/, '');
@@ -74,8 +68,14 @@ const corsOptions = {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Allow-Origin', 'X-User-Role'],
     optionsSuccessStatus: 200
 };
+// Ensure uploads directory exists
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
 app.use(cors(corsOptions));
 app.use(express.json());
+app.use('/uploads', express.static(uploadsDir));
 // Custom middleware to catch JSON syntax errors from body-parser gracefully (400 instead of 500)
 app.use((err, req, res, next) => {
     if (err instanceof SyntaxError && 'body' in err && err.status === 400) {
