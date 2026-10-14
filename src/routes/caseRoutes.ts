@@ -8,7 +8,8 @@ import {
   updateCase,
   updateStage, 
   deleteCase,
-  createRecommender 
+  createRecommender,
+  getRecommendersByCase 
 } from '../controllers/caseController.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
 import { roleMiddleware } from '../middleware/roleMiddleware.js';
@@ -26,6 +27,7 @@ router.put('/:id', roleMiddleware(['superadmin', 'admin', 'writer']), updateCase
 router.patch('/:id', roleMiddleware(['superadmin', 'admin', 'writer']), updateCase);
 router.patch('/:caseNumber/stage', roleMiddleware(['superadmin', 'admin', 'writer', 'reviewer']), updateStage);
 router.delete('/:id', roleMiddleware(['superadmin', 'admin']), deleteCase);
-router.post('/:caseId/recommenders', roleMiddleware(['superadmin', 'admin', 'writer', 'reviewer']), createRecommender);
+router.get('/:caseId/recommenders', roleMiddleware(['superadmin', 'admin', 'writer', 'reviewer', 'client']), getRecommendersByCase);
+router.post('/:caseId/recommenders', roleMiddleware(['superadmin', 'admin', 'writer', 'reviewer', 'client']), createRecommender);
 
 export default router;

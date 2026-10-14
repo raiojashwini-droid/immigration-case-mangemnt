@@ -193,6 +193,9 @@ export const getMyCase = async (req: AuthenticatedRequest, res: Response) => {
 export const getCaseById = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const userRole = req.user?.role?.toLowerCase();
+    const userEmail = req.user?.email;
+
     const caseItem = await prisma.case.findFirst({
       where: {
         OR: [
@@ -211,6 +214,16 @@ export const getCaseById = async (req: AuthenticatedRequest, res: Response) => {
 
     if (!caseItem) {
       return res.status(404).json({ success: false, error: 'Case not found' });
+    }
+
+    if (userRole === 'client') {
+      if (!userEmail) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Missing user email in session' });
+      }
+      const client = await prisma.client.findUnique({ where: { email: userEmail } });
+      if (!client || caseItem.clientId !== client.id) {
+        return res.status(403).json({ success: false, error: 'Forbidden: You do not have access to this case' });
+      }
     }
 
     return res.json({ success: true, data: caseItem });
@@ -573,27 +586,198 @@ export const deleteCase = async (req: Request, res: Response) => {
 
 export const createRecommender = async (req: AuthenticatedRequest, res: Response) => {
   const { caseId } = req.params;
-  const { name, title, organization, relationship } = req.body;
+  const userRole = req.user?.role?.toLowerCase();
+  const userEmail = req.user?.email;
+
   try {
-    const caseItem = await prisma.case.findUnique({ where: { id: caseId } });
+    if (!caseId) {
+      return res.status(400).json({ success: false, error: 'Case identifier is required' });
+    }
+
+    // 1. Resolve case by either UUID id or caseNumber
+    const caseItem = await prisma.case.findFirst({
+      where: {
+        OR: [
+          { id: caseId },
+          { caseNumber: caseId }
+        ]
+      },
+      include: {
+        client: true
+      }
+    });
+
+    if (!caseItem) {
+      return res.status(404).json({ success: false, error: `Case not found for identifier: ${caseId}` });
+    }
+
+    // 2. Client ownership authorization enforcement
+    if (userRole === 'client') {
+      if (!userEmail) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Missing user email in session' });
+      }
+
+      const client = await prisma.client.findUnique({
+        where: { email: userEmail }
+      });
+
+      if (!client || caseItem.clientId !== client.id) {
+        console.warn(`[AUTH FORBIDDEN] Client ${userEmail} attempted unauthorized recommender submission for case ${caseItem.caseNumber} (owner clientId: ${caseItem.clientId})`);
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden: You are not authorized to submit recommenders for this case'
+        });
+      }
+    }
+
+    // 3. Normalize input: support single recommender or bulk array
+    let candidates: any[] = [];
+    if (Array.isArray(req.body)) {
+      candidates = req.body;
+    } else if (req.body?.recommenders && Array.isArray(req.body.recommenders)) {
+      candidates = req.body.recommenders;
+    } else if (req.body?.name) {
+      candidates = [req.body];
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid request body: Expected recommender details or recommenders array'
+      });
+    }
+
+    if (candidates.length === 0) {
+      return res.status(400).json({ success: false, error: 'No recommender entries provided' });
+    }
+
+    // 4. Fetch existing recommenders for this case to prevent duplicate submissions
+    const existingRecs = await prisma.recommender.findMany({
+      where: { caseId: caseItem.id }
+    });
+
+    const results: any[] = [];
+    const errors: any[] = [];
+
+    for (const item of candidates) {
+      const rawName = (item.name || '').trim();
+      if (!rawName) {
+        errors.push({ item, error: 'Recommender name is required' });
+        continue;
+      }
+
+      const title = item.title || item.field || 'Independent Expert';
+      const organization = item.organization || item.institution || 'US Research Institute';
+      const relationship = item.relationship || 'Independent Expert';
+      const status = item.status || 'Identified';
+      const cvReceived = item.cvReceived !== undefined ? Boolean(item.cvReceived) : true;
+      const keyContributionsMentioned = item.keyContributionsMentioned || [
+        'Attests to candidate original algorithmic contributions',
+        'Validates national merit'
+      ];
+
+      // Check for existing recommender by name (case-insensitive)
+      const existing = existingRecs.find(
+        r => r.name.trim().toLowerCase() === rawName.toLowerCase()
+      );
+
+      try {
+        if (existing) {
+          // Update existing recommender record rather than creating a duplicate
+          const updated = await prisma.recommender.update({
+            where: { id: existing.id },
+            data: {
+              title,
+              organization,
+              relationship,
+              status: existing.status === 'Identified' ? status : existing.status,
+              cvReceived: existing.cvReceived || cvReceived,
+              keyContributionsMentioned
+            }
+          });
+          results.push(updated);
+        } else {
+          // Create new recommender record using the actual caseItem.id (UUID)
+          const created = await prisma.recommender.create({
+            data: {
+              caseId: caseItem.id, // Always use UUID from caseItem
+              name: rawName,
+              title,
+              organization,
+              relationship,
+              status,
+              cvReceived,
+              keyContributionsMentioned
+            }
+          });
+          results.push(created);
+        }
+      } catch (err: any) {
+        console.error(`[RECOMMENDER ERROR] Failed to save recommender ${rawName}:`, err);
+        errors.push({ name: rawName, error: err.message || 'Database write error' });
+      }
+    }
+
+    if (results.length === 0 && errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Failed to process recommenders',
+        details: errors
+      });
+    }
+
+    const statusCode = errors.length > 0 ? 207 : 201;
+    return res.status(statusCode).json({
+      success: true,
+      data: results.length === 1 && !Array.isArray(req.body?.recommenders) && !Array.isArray(req.body) ? results[0] : results,
+      totalProcessed: results.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error: any) {
+    console.error('[RECOMMENDER DEBUG] Uncaught error in createRecommender:', error);
+    return res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+};
+
+export const getRecommendersByCase = async (req: AuthenticatedRequest, res: Response) => {
+  const { caseId } = req.params;
+  const userRole = req.user?.role?.toLowerCase();
+  const userEmail = req.user?.email;
+
+  try {
+    if (!caseId) {
+      return res.status(400).json({ success: false, error: 'Case identifier is required' });
+    }
+
+    const caseItem = await prisma.case.findFirst({
+      where: {
+        OR: [
+          { id: caseId },
+          { caseNumber: caseId }
+        ]
+      },
+      include: { client: true }
+    });
+
     if (!caseItem) {
       return res.status(404).json({ success: false, error: 'Case not found' });
     }
-    const newRec = await prisma.recommender.create({
-      data: {
-        caseId,
-        name,
-        title,
-        organization: organization || 'US Research Institute',
-        relationship,
-        status: 'Outreach Sent',
-        cvReceived: true,
-        keyContributionsMentioned: ['Attests to candidate original algorithmic contributions', 'Validates national merit']
+
+    if (userRole === 'client') {
+      if (!userEmail) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Missing user email in session' });
       }
+      const client = await prisma.client.findUnique({ where: { email: userEmail } });
+      if (!client || caseItem.clientId !== client.id) {
+        return res.status(403).json({ success: false, error: 'Forbidden: You do not have access to this case' });
+      }
+    }
+
+    const recommenders = await prisma.recommender.findMany({
+      where: { caseId: caseItem.id }
     });
-    return res.status(201).json({ success: true, data: newRec });
+
+    return res.json({ success: true, data: recommenders });
   } catch (error: any) {
-    console.error('Error in createRecommender:', error);
+    console.error('Error in getRecommendersByCase:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 };
