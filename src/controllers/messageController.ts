@@ -46,11 +46,14 @@ export const createMessage = async (req: AuthenticatedRequest, res: Response) =>
     const now = new Date();
     const timestampStr = now.toISOString().replace('T', ' ').substring(0, 16);
 
+    const resolvedRole = req.user?.role || result.data.senderRole;
+    const resolvedName = result.data.senderName;
+
     const newMessage = await prisma.message.create({
       data: {
         caseId: result.data.caseId,
-        senderName: result.data.senderName,
-        senderRole: result.data.senderRole,
+        senderName: resolvedName,
+        senderRole: resolvedRole,
         content: result.data.content,
         timestamp: timestampStr
       }
