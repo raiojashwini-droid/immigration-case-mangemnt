@@ -113,6 +113,26 @@ export const createClient = async (req: Request, res: Response) => {
         }
       });
 
+      // 3. Auto-initialize case for new client (Stage 1)
+      const caseCount = await tx.case.count();
+      const counter = caseCount + 1;
+      const formattedNum = counter < 10 ? `00${counter}` : counter < 100 ? `0${counter}` : `${counter}`;
+      const caseNumber = `NIW-2026-${formattedNum}`;
+      await tx.case.create({
+        data: {
+          caseNumber,
+          clientId: client.id,
+          petitionCategory: 'EB-2 NIW',
+          fieldCategory: result.data.currentField || 'Proposed Endeavor',
+          riskLevel: 'medium',
+          targetFilingDate: '2026-12-31',
+          uscisServiceCenter: 'Nebraska (NSC)',
+          premiumProcessing: false,
+          currentStage: 1,
+          notes: 'Auto-initialized case for client'
+        }
+      });
+
       return client;
     });
 
