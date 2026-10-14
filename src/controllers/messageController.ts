@@ -7,7 +7,8 @@ const createMessageSchema = z.object({
   caseId: z.string(),
   senderName: z.string().min(2),
   senderRole: z.enum(['superadmin', 'admin', 'writer', 'reviewer', 'client']),
-  content: z.string().min(1)
+  content: z.string().min(1),
+  channel: z.string().optional()
 });
 
 export const getMessages = async (req: AuthenticatedRequest, res: Response) => {
