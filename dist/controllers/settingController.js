@@ -32,10 +32,55 @@ export const DEFAULT_PRACTICE_AREAS = [
 ];
 export const getSettings = async (req, res) => {
     try {
-        const settings = await prisma.systemSetting.findFirst();
-        const auditLogs = await prisma.auditLog.findMany({
-            orderBy: { timestamp: 'desc' }
-        });
+        let settings = null;
+        try {
+            settings = await prisma.systemSetting.findFirst();
+        }
+        catch (dbErr) {
+            console.warn('SystemSetting query warning:', dbErr?.message || dbErr);
+        }
+        let auditLogs = [];
+        try {
+            auditLogs = await prisma.auditLog.findMany({
+                orderBy: { timestamp: 'desc' }
+            });
+        }
+        catch (logErr) {
+            try {
+                auditLogs = await prisma.auditLog.findMany();
+            }
+            catch (fallbackErr) {
+                console.warn('AuditLog query warning:', fallbackErr?.message || fallbackErr);
+            }
+        }
+        let feeDefaultsObj = {};
+        if (settings?.feeDefaults) {
+            if (typeof settings.feeDefaults === 'string') {
+                try {
+                    feeDefaultsObj = JSON.parse(settings.feeDefaults);
+                }
+                catch {
+                    feeDefaultsObj = {};
+                }
+            }
+            else if (typeof settings.feeDefaults === 'object') {
+                feeDefaultsObj = settings.feeDefaults;
+            }
+        }
+        let practiceAreasObj = DEFAULT_PRACTICE_AREAS;
+        if (settings?.practiceAreas) {
+            if (typeof settings.practiceAreas === 'string') {
+                try {
+                    practiceAreasObj = JSON.parse(settings.practiceAreas);
+                }
+                catch {
+                    practiceAreasObj = DEFAULT_PRACTICE_AREAS;
+                }
+            }
+            else if (Array.isArray(settings.practiceAreas)) {
+                practiceAreasObj = settings.practiceAreas;
+            }
+        }
         const mergedSettings = {
             id: settings?.id,
             companyName: settings?.companyName || 'Babel Global Editorial Services',
@@ -47,17 +92,17 @@ export const getSettings = async (req, res) => {
             emailRequests: settings ? settings.emailRequests !== false : true,
             appointmentReminders: settings ? settings.appointmentReminders !== false : true,
             quietHours: settings ? settings.quietHours !== false : true,
-            practiceAreas: settings?.practiceAreas || DEFAULT_PRACTICE_AREAS,
+            practiceAreas: practiceAreasObj,
             feeDefaults: {
                 ...DEFAULT_FEE_DEFAULTS,
-                ...(settings?.feeDefaults || {}),
+                ...(feeDefaultsObj || {}),
                 aos: {
                     ...DEFAULT_FEE_DEFAULTS.aos,
-                    ...(settings?.feeDefaults?.aos || {})
+                    ...(feeDefaultsObj?.aos || {})
                 },
                 o1: {
                     ...DEFAULT_FEE_DEFAULTS.o1,
-                    ...(settings?.feeDefaults?.o1 || {})
+                    ...(feeDefaultsObj?.o1 || {})
                 }
             }
         };

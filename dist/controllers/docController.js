@@ -1,10 +1,13 @@
+import path from 'path';
+import fs from 'fs';
 import { prisma } from '../config/db.js';
 import { uploadToCloudinary } from '../services/cloudinaryService.js';
 import { z } from 'zod';
 const uploadDocSchema = z.object({
     caseId: z.string(),
     category: z.string().min(1),
-    uploadedBy: z.string().optional()
+    uploadedBy: z.string().optional(),
+    exhibitNumber: z.string().optional()
 });
 export const uploadDocument = async (req, res) => {
     if (!req.user) {
@@ -40,7 +43,7 @@ export const uploadDocument = async (req, res) => {
         return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
     try {
-        // Check if the case exists
+        // Check if the case exists, or fallback to first active case
         let targetCaseId = caseId;
         let caseItem = await prisma.case.findUnique({ where: { id: targetCaseId } });
         if (!caseItem) {
@@ -48,8 +51,9 @@ export const uploadDocument = async (req, res) => {
             if (firstCase) {
                 targetCaseId = firstCase.id;
                 caseItem = firstCase;
-            } else {
-                return res.status(404).json({ success: false, error: 'Case not found' });
+            }
+            else {
+                return res.status(404).json({ success: false, error: 'No active case found in system' });
             }
         }
         // Retrieve uploading user name with role-aware resolution
@@ -58,39 +62,68 @@ export const uploadDocument = async (req, res) => {
             const dbUser = req.user.id ? await prisma.user.findUnique({ where: { id: req.user.id } }) : null;
             if (dbUser && dbUser.name && dbUser.name.toLowerCase() !== 'client') {
                 uploadedBy = dbUser.name;
-            } else if (req.user.role === 'writer' || req.user.email?.includes('writer')) {
+            }
+            else if (req.user.role === 'writer' || req.user.email?.includes('writer')) {
                 uploadedBy = 'Babel Drafter / Researcher';
-            } else if (req.user.role === 'admin' || req.user.email?.includes('admin')) {
+            }
+            else if (req.user.role === 'admin' || req.user.email?.includes('admin')) {
                 uploadedBy = 'Case Administrator';
-            } else if (req.user.role === 'superadmin') {
+            }
+            else if (req.user.role === 'superadmin') {
                 uploadedBy = 'Super Administrator';
-            } else if (req.user.role === 'reviewer') {
+            }
+            else if (req.user.role === 'reviewer') {
                 uploadedBy = 'Senior Reviewer';
-            } else if (req.user.role === 'client') {
+            }
+            else if (req.user.role === 'client') {
                 uploadedBy = 'Client';
-            } else {
+            }
+            else {
                 uploadedBy = dbUser?.name || req.user.email || 'Petition Drafter';
             }
         }
+        const uploadsDir = path.join(process.cwd(), 'uploads');
+        if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+        }
         const createdDocs = [];
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
         for (const f of uploadedFiles) {
-            // 3. Upload to Cloudinary
-            const cloudinaryResult = await uploadToCloudinary(f.buffer, 'case_documents');
+            // 1. Save file locally on disk so downloaded files are 100% genuine and uncorrupted
+            const sanitizedName = f.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const uniqueFileName = `${Date.now()}_${sanitizedName}`;
+            const filePath = path.join(uploadsDir, uniqueFileName);
+            fs.writeFileSync(filePath, f.buffer);
+            let finalFileUrl = `${baseUrl}/uploads/${uniqueFileName}`;
+            // 2. Upload to Cloudinary if configured
+            try {
+                const isCloudinaryConfigured = process.env.CLOUDINARY_CLOUD_NAME &&
+                    process.env.CLOUDINARY_CLOUD_NAME !== 'your-cloudinary-cloud-name';
+                if (isCloudinaryConfigured) {
+                    const cloudinaryResult = await uploadToCloudinary(f.buffer, 'case_documents');
+                    if (cloudinaryResult?.secure_url && !cloudinaryResult.secure_url.includes('demo/image/upload')) {
+                        finalFileUrl = cloudinaryResult.secure_url;
+                    }
+                }
+            }
+            catch (cloudErr) {
+                console.warn('Cloudinary upload warning, using local file:', cloudErr);
+            }
             // Calculate file size in human readable format
             const sizeInMB = (f.size / (1024 * 1024)).toFixed(1);
             const fileSizeStr = parseFloat(sizeInMB) > 0.1 ? `${sizeInMB} MB` : `${(f.size / 1024).toFixed(0)} KB`;
             // Generate AI Summary placeholder/template based on category and file name
             const aiSummary = `AI analysis completed for ${f.originalname} under category ${category}. Verified size of ${fileSizeStr}.`;
-            // 4. Create document record in database
+            // 3. Create document record in database
             const document = await prisma.document.create({
                 data: {
-                    caseId,
+                    caseId: targetCaseId,
                     name: f.originalname,
                     category,
                     fileSize: fileSizeStr,
                     uploadedBy,
-                    fileUrl: cloudinaryResult.secure_url,
-                    cloudinaryId: cloudinaryResult.public_id,
+                    fileUrl: finalFileUrl,
+                    cloudinaryId: uniqueFileName,
                     aiSummary,
                     status: 'Pending Review'
                 }
@@ -116,7 +149,15 @@ export const getDocuments = async (req, res) => {
             where: whereClause,
             orderBy: { uploadedAt: 'desc' }
         });
-        return res.json({ success: true, data: documents });
+        const hostBaseUrl = `${req.protocol}://${req.get('host')}`;
+        const mapped = documents.map(doc => {
+            let fileUrl = doc.fileUrl;
+            if (fileUrl && fileUrl.includes('localhost:5005')) {
+                fileUrl = fileUrl.replace('http://localhost:5005', hostBaseUrl);
+            }
+            return { ...doc, fileUrl };
+        });
+        return res.json({ success: true, data: mapped });
     }
     catch (error) {
         return res.status(500).json({ success: false, error: error.message });

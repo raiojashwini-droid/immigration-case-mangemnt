@@ -6,7 +6,11 @@ import bcrypt from 'bcryptjs';
 const createClientSchema = z.object({
   name: z.string().min(2).max(100),
   email: z.string().email(),
-  phone: z.string().optional().nullable().transform(val => (val && val.trim().length >= 5) ? val : "+1 (555) 012-3456"),
+  phone: z.string().optional().nullable().transform(val => {
+    if (!val || val.trim().length === 0) return "+1 (555) 012-3456";
+    const digits = val.replace(/\D/g, '');
+    return digits.length > 0 ? digits.slice(0, 10) : "+1 (555) 012-3456";
+  }),
   countryOfBirth: z.string().optional().nullable().transform(val => (val && val.trim().length >= 2) ? val : "Not Specified"),
   currentField: z.string().optional().nullable().transform(val => (val && val.trim().length >= 2) ? val : "Not Specified"),
   highestDegree: z.string().optional().nullable().transform(val => val || "Master's"),
@@ -153,7 +157,11 @@ export const createClient = async (req: Request, res: Response) => {
 const updateClientSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   email: z.string().email().optional(),
-  phone: z.string().optional().transform(val => val || undefined),
+  phone: z.string().optional().nullable().transform(val => {
+    if (!val || val.trim().length === 0) return undefined;
+    const digits = val.replace(/\D/g, '');
+    return digits.length > 0 ? digits.slice(0, 10) : undefined;
+  }),
   countryOfBirth: z.string().optional().transform(val => val || undefined),
   currentField: z.string().optional().transform(val => val || undefined),
   highestDegree: z.string().optional().transform(val => val || undefined),
